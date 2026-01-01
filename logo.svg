@@ -1,0 +1,7 @@
+
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Grey "C" Structure -->
+  <path d="M150 100H400V150H200V400H150V100Z" fill="#7E7E7E"/>
+  <!-- Blue Stylized "M" Structure -->
+  <path d="M220 220H320V320H420V180H470V450H420V370H320V450H220V220Z" fill="#31A1B8"/>
+</svg>
