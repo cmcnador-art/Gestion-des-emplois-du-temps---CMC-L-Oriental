@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { fetchTimetables, addTimetable, deleteTimetablesByFilter, uploadTimetablePdf } from '../services/api';
+import { fetchTimetables, addTimetable, updateTimetable, deleteTimetablesByFilter, uploadTimetablePdf } from '../services/api';
 import { supabase } from '../services/supabase';
 import { DEFAULT_COLOR_ORDER, UI_COLORS } from '../constants';
 import { TimetableEntry } from '../types';
@@ -30,18 +30,19 @@ interface TreeStructure {
 const AdminStructure: React.FC = () => {
   const [rawData, setRawData] = useState<TimetableEntry[]>([]);
   const [academicTree, setAcademicTree] = useState<TreeStructure>({ poles: [] });
-  const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState<ToastType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalType, setModalType] = useState<'ADD_POLE' | 'EDIT_POLE' | 'ADD_SPECIALTY' | 'ADD_GROUP' | null>(null);
+  const [modalType, setModalType] = useState<'ADD_POLE' | 'EDIT_POLE' | 'ADD_SPECIALTY' | 'ADD_GROUP' | 'EDIT_GROUP' | null>(null);
   const [uploading, setUploading] = useState(false);
   
   const [confirmDelete, setConfirmDelete] = useState<{type: string, id: string, name: string} | null>(null);
   
   const [formValues, setFormValues] = useState({
+    groupId: '',
     poleName: '',
     poleColor: DEFAULT_COLOR_ORDER[0],
     originalPoleName: '',
+    originalGroupName: '',
     specName: '',
     levelName: '1ère Année',
     groupName: '',
@@ -121,7 +122,7 @@ const AdminStructure: React.FC = () => {
       }
     }
 
-    if (modalType !== 'EDIT_POLE') {
+    if (modalType !== 'EDIT_POLE' && modalType !== 'EDIT_GROUP') {
         if (modalType === 'ADD_SPECIALTY' || modalType === 'ADD_POLE') {
            const existingSpec = rawData.find(r => r.specialty.toLowerCase() === sName.toLowerCase() && r.pole.toUpperCase() !== pName);
            if (existingSpec) return `La spécialité "${sName}" appartient déjà au pôle ${existingSpec.pole}.`;
@@ -130,13 +131,19 @@ const AdminStructure: React.FC = () => {
         if (existingGroup) return `Le groupe "${gName}" existe déjà dans le système.`;
     }
 
+    if (modalType === 'EDIT_GROUP') {
+      if (gName.toLowerCase() !== formValues.originalGroupName.toLowerCase()) {
+        const existingGroup = rawData.find(r => r.group.toLowerCase() === gName.toLowerCase());
+        if (existingGroup) return `Le groupe "${gName}" existe déjà.`;
+      }
+    }
+
     return null;
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Strict validation for ADD_POLE, ADD_SPECIALTY, ADD_GROUP to prevent entries without specialty or file
     if (modalType === 'ADD_POLE' || modalType === 'ADD_SPECIALTY' || modalType === 'ADD_GROUP') {
       if (modalType === 'ADD_POLE') {
         if (!formValues.poleName.trim() || !formValues.specName.trim() || !formValues.groupName.trim()) {
@@ -169,6 +176,25 @@ const AdminStructure: React.FC = () => {
         
         if (error) throw error;
         addToast("Pôle mis à jour avec succès.", "success");
+      } else if (modalType === 'EDIT_GROUP') {
+        let finalPdfUrl = formValues.pdfUrl;
+        if (formValues.file) {
+          setUploading(true);
+          finalPdfUrl = await uploadTimetablePdf(formValues.file, formValues.groupName);
+          setUploading(false);
+        }
+
+        await updateTimetable({
+          id: formValues.groupId,
+          pole: formValues.poleName,
+          poleColor: formValues.poleColor,
+          specialty: formValues.specName,
+          level: formValues.levelName,
+          group: formValues.groupName,
+          pdfUrl: finalPdfUrl,
+          active: true
+        });
+        addToast("Groupe mis à jour.", "success");
       } else {
         let finalPdfUrl = formValues.pdfUrl;
 
@@ -202,15 +228,15 @@ const AdminStructure: React.FC = () => {
 
   const openAddModal = (type: 'ADD_POLE' | 'ADD_SPECIALTY' | 'ADD_GROUP', pole?: string, spec?: string) => {
     const poleObj = academicTree.poles.find(p => p.name === pole);
-    
-    // For new poles, find the first available color that isn't used by another pole
     const usedColors = academicTree.poles.map(p => p.color);
     const availableColor = DEFAULT_COLOR_ORDER.find(c => !usedColors.includes(c)) || DEFAULT_COLOR_ORDER[0];
 
     setFormValues({
+      groupId: '',
       poleName: pole || '',
       poleColor: poleObj?.color || availableColor,
       originalPoleName: pole || '',
+      originalGroupName: '',
       specName: spec || '',
       levelName: '1ère Année',
       groupName: '',
@@ -225,9 +251,11 @@ const AdminStructure: React.FC = () => {
     if (!poleObj) return;
     
     setFormValues({
+      groupId: '',
       poleName: poleObj.name,
       poleColor: poleObj.color,
       originalPoleName: poleObj.name,
+      originalGroupName: '',
       specName: '',
       levelName: '',
       groupName: '',
@@ -235,6 +263,22 @@ const AdminStructure: React.FC = () => {
       file: null
     });
     setModalType('EDIT_POLE');
+  };
+
+  const openEditGroupModal = (group: TimetableEntry) => {
+    setFormValues({
+      groupId: group.id,
+      poleName: group.pole,
+      poleColor: group.poleColor || DEFAULT_COLOR_ORDER[0],
+      originalPoleName: group.pole,
+      originalGroupName: group.group,
+      specName: group.specialty,
+      levelName: group.level,
+      groupName: group.group,
+      pdfUrl: group.pdfUrl,
+      file: null
+    });
+    setModalType('EDIT_GROUP');
   };
 
   const handleCloseModal = () => {
@@ -257,18 +301,9 @@ const AdminStructure: React.FC = () => {
     setLoading(false);
   };
 
-  const filteredPoles = useMemo(() => {
-    let result = academicTree.poles;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(p => 
-        p.name.toLowerCase().includes(q) || 
-        p.specialties.some(s => s.name.toLowerCase().includes(q))
-      );
-    }
-    // Tri alphabétique systématique
-    return [...result].sort((a, b) => a.name.localeCompare(b.name));
-  }, [academicTree.poles, searchQuery]);
+  const sortedPoles = useMemo(() => {
+    return [...academicTree.poles].sort((a, b) => a.name.localeCompare(b.name));
+  }, [academicTree.poles]);
 
   return (
     <div className="space-y-6">
@@ -279,25 +314,15 @@ const AdminStructure: React.FC = () => {
           <h1 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Structure Académique</h1>
           <p className="text-gray-500 font-medium">Gérez les pôles, spécialités et groupes.</p>
         </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder="Rechercher..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 h-12 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-cmc-blue/20"
-            />
-          </div>
-          <Button onClick={() => openAddModal('ADD_POLE')} className="h-12 px-6 rounded-2xl shadow-lg shadow-cmc-blue/20">
+        <div className="flex items-center gap-3">
+          <Button onClick={() => openAddModal('ADD_POLE')} className="h-12 px-8 rounded-2xl shadow-lg shadow-cmc-blue/20">
             <Plus className="w-5 h-5 mr-2" /> Nouveau Pôle
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6">
-        {filteredPoles.map(pole => {
+        {sortedPoles.map(pole => {
           const color = UI_COLORS.find(c => c.id === pole.color) || UI_COLORS[0];
           return (
             <Collapsible 
@@ -327,8 +352,9 @@ const AdminStructure: React.FC = () => {
                           <span className="text-xs font-bold text-gray-600 dark:text-gray-400">{group.group}</span>
                           <span className="text-[10px] text-gray-400">({group.level})</span>
                           <div className="flex items-center gap-1 ml-1">
-                             <button onClick={() => window.open(group.pdfUrl, '_blank')} className="p-1 hover:text-cmc-blue" title="Voir PDF"><FileText className="w-3 h-3" /></button>
-                             <button onClick={() => setConfirmDelete({type: 'GROUP', id: group.id, name: group.group})} className="p-1 hover:text-red-500" title="Supprimer groupe"><Trash2 className="w-3 h-3" /></button>
+                             <button onClick={() => window.open(group.pdfUrl, '_blank')} className="p-1 hover:text-cmc-blue" title="Voir PDF"><FileText className="w-3.5 h-3.5" /></button>
+                             <button onClick={() => openEditGroupModal(group)} className="p-1 hover:text-cmc-blue" title="Modifier groupe"><Edit className="w-3.5 h-3.5" /></button>
+                             <button onClick={() => setConfirmDelete({type: 'GROUP', id: group.id, name: group.group})} className="p-1 hover:text-red-500" title="Supprimer groupe"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                         </div>
                       ))}
@@ -347,7 +373,8 @@ const AdminStructure: React.FC = () => {
         title={
           modalType === 'ADD_POLE' ? 'Initialisation d\'un Nouveau Pôle' : 
           modalType === 'EDIT_POLE' ? 'Modifier le Pôle' :
-          modalType === 'ADD_SPECIALTY' ? 'Nouvelle Spécialité' : 'Nouveau Groupe'
+          modalType === 'ADD_SPECIALTY' ? 'Nouvelle Spécialité' : 
+          modalType === 'EDIT_GROUP' ? 'Modifier le Groupe' : 'Nouveau Groupe'
         }
       >
         <form onSubmit={handleFormSubmit} className="space-y-6">
@@ -361,9 +388,7 @@ const AdminStructure: React.FC = () => {
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">Couleur Distinctive</label>
                 <div className="flex flex-wrap gap-2">
                   {UI_COLORS.map(c => {
-                    // Check if this color is already used by another pole
                     const isUsed = academicTree.poles.some(p => p.color === c.id);
-                    // Allow selecting current color if we are editing the pole
                     const currentPole = academicTree.poles.find(p => p.name === formValues.originalPoleName);
                     const isSelectable = modalType === 'ADD_POLE' ? !isUsed : (!isUsed || c.id === currentPole?.color);
                     
@@ -409,7 +434,6 @@ const AdminStructure: React.FC = () => {
                 />
               </div>
 
-              {/* PDF Section for New Pole */}
               <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">Emploi du temps (Initial)</label>
                 <input type="file" accept=".pdf" onChange={handleFileChange} className="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-cmc-blue/10 file:text-cmc-blue hover:file:bg-cmc-blue/20 cursor-pointer" required />
@@ -438,7 +462,7 @@ const AdminStructure: React.FC = () => {
             </div>
           )}
 
-          {modalType === 'ADD_GROUP' && (
+          {(modalType === 'ADD_GROUP' || modalType === 'EDIT_GROUP') && (
             <div className="space-y-4">
               <div className="flex gap-4">
                 <div className="flex-1">
@@ -456,14 +480,19 @@ const AdminStructure: React.FC = () => {
               </div>
               
               <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
-                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">Emploi du temps (PDF)</label>
-                <input type="file" accept=".pdf" onChange={handleFileChange} className="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-cmc-blue/10 file:text-cmc-blue hover:file:bg-cmc-blue/20 cursor-pointer" required />
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">
+                  Emploi du temps (PDF) {modalType === 'EDIT_GROUP' && "(Optionnel)"}
+                </label>
+                <input type="file" accept=".pdf" onChange={handleFileChange} className="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-cmc-blue/10 file:text-cmc-blue hover:file:bg-cmc-blue/20 cursor-pointer" required={modalType === 'ADD_GROUP'} />
+                {modalType === 'EDIT_GROUP' && formValues.pdfUrl && !formValues.file && (
+                  <p className="mt-2 text-[10px] text-cmc-blue font-bold flex items-center gap-1"><FileText className="w-3 h-3"/> PDF actuel conservé</p>
+                )}
               </div>
             </div>
           )}
 
           <Button type="submit" disabled={loading || uploading} className="w-full h-14 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-gray-950 font-black uppercase tracking-widest">
-            {loading ? <RefreshCw className="animate-spin w-5 h-5" /> : (modalType === 'EDIT_POLE' ? 'Mettre à jour' : 'Créer & Enregistrer')}
+            {loading ? <RefreshCw className="animate-spin w-5 h-5" /> : (modalType === 'EDIT_POLE' || modalType === 'EDIT_GROUP' ? 'Mettre à jour' : 'Créer & Enregistrer')}
           </Button>
         </form>
       </Modal>
@@ -477,7 +506,7 @@ const AdminStructure: React.FC = () => {
             Voulez-vous vraiment supprimer <strong className="text-gray-900 dark:text-white">"{confirmDelete?.name}"</strong> ? 
             <br /> <span className="text-xs text-red-500 mt-2 block">Cette action supprimera tout le contenu associé.</span>
           </p>
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             <Button variant="secondary" onClick={() => setConfirmDelete(null)} className="flex-1 h-12 rounded-xl">Annuler</Button>
             <Button variant="destructive" onClick={executeDelete} className="flex-1 h-12 rounded-xl">Supprimer</Button>
           </div>

@@ -1,7 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
+// Fix: Use namespaced import to resolve 'no exported member' errors in certain TS environments
+import * as RouterDOM from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { LogOut, Sun, Moon } from './Icons';
+
+const { useLocation, Link, useNavigate } = RouterDOM as any;
 
 interface LayoutProps {
   children: React.ReactNode;

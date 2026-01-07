@@ -22,9 +22,7 @@ interface TeacherData {
 
 const AdminInstructors: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [isScanning, setIsScanning] = useState(false);
   const [teachers, setTeachers] = useState<TeacherData[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState<{ id: string, message: string, type: 'success' | 'error' | 'info' }[]>([]);
 
   useEffect(() => {
@@ -76,17 +74,6 @@ const AdminInstructors: React.FC = () => {
     }
   };
 
-  const filteredTeachers = useMemo(() => {
-    if (!searchQuery) return teachers;
-    const q = searchQuery.toLowerCase();
-    return teachers.filter(t => 
-      t.name.toLowerCase().includes(q) || 
-      t.pole.toLowerCase().includes(q) ||
-      t.modules.some(m => m.toLowerCase().includes(q)) ||
-      t.groups.some(g => g.toLowerCase().includes(q))
-    );
-  }, [teachers, searchQuery]);
-
   return (
     <div className="space-y-6 pb-20">
       <ToastContainer toasts={toasts} removeToast={(id: string) => setToasts(prev => prev.filter(t => t.id !== id))} />
@@ -96,19 +83,10 @@ const AdminInstructors: React.FC = () => {
           <h1 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Corps Enseignant</h1>
           <p className="text-gray-500 font-medium italic">Liste automatisée basée sur les scans d'emplois du temps.</p>
         </div>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder="Nom, pôle, module..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 h-12 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 outline-none focus:ring-2 focus:ring-cmc-blue/20"
-            />
-          </div>
-          <Button variant="secondary" onClick={loadInstructors} disabled={loading} className="h-12 px-5 rounded-2xl">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" onClick={loadInstructors} disabled={loading} className="h-12 px-6 rounded-2xl shadow-sm border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> 
+            Actualiser la liste
           </Button>
         </div>
       </div>
@@ -119,13 +97,13 @@ const AdminInstructors: React.FC = () => {
             <RefreshCw className="w-12 h-12 text-cmc-blue animate-spin mx-auto mb-4" />
             <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Analyse du corps enseignant...</p>
           </motion.div>
-        ) : filteredTeachers.length > 0 ? (
+        ) : teachers.length > 0 ? (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
           >
-            {filteredTeachers.map((teacher, idx) => (
+            {teachers.map((teacher, idx) => (
               <motion.div
                 key={`${teacher.name}-${teacher.pole}`}
                 initial={{ opacity: 0, scale: 0.95 }}
@@ -189,9 +167,6 @@ const AdminInstructors: React.FC = () => {
                       <MapPin className="w-3 h-3" />
                       {teacher.rooms.length} Salle(s) habituelle(s)
                     </div>
-                    <Button size="xs" variant="ghost" className="text-[9px] font-black uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">
-                      Consulter Planning
-                    </Button>
                   </div>
                 </Card>
               </motion.div>
@@ -201,7 +176,7 @@ const AdminInstructors: React.FC = () => {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-20 text-center bg-white dark:bg-gray-900 rounded-[3rem] border-2 border-dashed border-gray-100 dark:border-gray-800">
             <Users className="w-16 h-16 text-gray-200 mx-auto mb-6" />
             <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase mb-2">Aucun formateur trouvé</h3>
-            <p className="text-gray-500 max-w-sm mx-auto font-medium">L'extraction automatique n'a pas trouvé de formateurs correspondant à votre recherche.</p>
+            <p className="text-gray-500 max-w-sm mx-auto font-medium">L'extraction automatique n'a pas trouvé de formateurs.</p>
           </motion.div>
         )}
       </AnimatePresence>

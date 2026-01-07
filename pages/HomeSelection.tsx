@@ -1,5 +1,7 @@
+
 import React from 'react';
-import { Link } from 'react-router-dom';
+// Fix: Use namespaced import to resolve 'no exported member' errors in certain TS environments
+import * as reactRouterDom from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Users, ShieldCheck, ChevronRight, BookOpen, 
@@ -7,6 +9,8 @@ import {
   CheckCircle2, Server, Activity, TrendingUp, Clock,
   Check, Zap, Coffee, Shield, Mail, FileText, Menu, Search, Lock, Star, Table, ShieldAlert, Layers
 } from '../components/Icons';
+
+const { Link } = reactRouterDom as any;
 
 const HomeSelection: React.FC = () => {
   return (

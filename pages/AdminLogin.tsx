@@ -1,18 +1,23 @@
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+// Fix: Use namespaced import to resolve 'no exported member' errors in certain TS environments
+import * as RouterDOM from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { signInWithEmailAndPassword, signInWithPopup, updatePassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithPopup, updatePassword, sendPasswordResetEmail } from 'firebase/auth';
 import { auth, googleProvider } from '../services/firebase';
 import { fetchAdminProfile, updateAdminProfile } from '../services/api';
-import { ChevronRight, ShieldCheck, AlertCircle, RefreshCw, Lock, Mail, CheckCircle2, Eye, EyeOff } from '../components/Icons';
+import { ChevronRight, ShieldCheck, AlertCircle, RefreshCw, Lock, Mail, CheckCircle2, Eye, EyeOff, Info } from '../components/Icons';
 import { Button, Input } from '../components/AdminUI';
+
+const { useNavigate } = RouterDOM as any;
 
 const AdminLogin: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [activationMode, setActivationMode] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -24,41 +29,72 @@ const AdminLogin: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setInfoMessage('');
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail || !cleanPassword) {
+      setError("Email et mot de passe requis.");
+      setIsLoading(false);
+      return;
+    }
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPassword);
       const user = userCredential.user;
-      
-      // Récupération du profil persistant dans Supabase
       const profile = await fetchAdminProfile(user.uid);
       
       if (!profile) {
-        throw new Error("Profil administrateur non trouvé dans la base de données. Contactez un Super Admin.");
+        await auth.signOut();
+        throw new Error("Compte Firebase valide, mais profil Supabase introuvable.");
       }
 
-      // Stockage temporaire du profil
       localStorage.setItem('adminProfile', JSON.stringify(profile));
       localStorage.setItem('adminToken', await user.getIdToken());
 
-      // Vérification de l'activation
       if (!profile.isActivated) {
         setActivationMode(true);
         setIsLoading(false);
         return;
       }
 
-      // Mise à jour de la date de dernière connexion
       await updateAdminProfile(user.uid, { lastLogin: new Date().toISOString() });
-      
       navigate('/admin/dashboard');
     } catch (err: any) {
-      setError(err.message.includes('auth/invalid-credential') ? "Identifiants incorrects." : err.message);
+      let msg = "Une erreur est survenue lors de la connexion.";
+      if (err.code === 'auth/invalid-credential') msg = "Email ou mot de passe incorrect.";
+      else if (err.code === 'auth/too-many-requests') msg = "Compte temporairement bloqué (trop de tentatives).";
+      else msg = err.message;
+      
+      setError(msg);
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError("Saisissez votre email pour recevoir le lien.");
+      return;
+    }
+    setIsResetting(true);
+    setError('');
+    setInfoMessage('');
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setInfoMessage("Lien envoyé ! Vérifiez vos emails (et spams).");
+    } catch (err: any) {
+      let msg = err.message;
+      if (err.code === 'auth/user-not-found') msg = "Aucun compte trouvé avec cet email.";
+      setError("Erreur : " + msg);
+    } finally {
+      setIsResetting(false);
     }
   };
 
   const handleActivation = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     if (newPassword !== confirmNewPassword) {
       setError("Les mots de passe ne correspondent pas.");
       return;
@@ -71,25 +107,9 @@ const AdminLogin: React.FC = () => {
     setIsLoading(true);
     try {
       const user = auth.currentUser;
-      if (!user) throw new Error("Session expirée.");
-
-      // Mise à jour dans Firebase Auth
+      if (!user) throw new Error("Session expirée. Reconnectez-vous.");
       await updatePassword(user, newPassword);
-      
-      // Mise à jour du flag d'activation dans Supabase
-      await updateAdminProfile(user.uid, { 
-        isActivated: true, 
-        lastLogin: new Date().toISOString() 
-      });
-
-      // Mettre à jour le profil local
-      const stored = localStorage.getItem('adminProfile');
-      if (stored) {
-        const p = JSON.parse(stored);
-        p.isActivated = true;
-        localStorage.setItem('adminProfile', JSON.stringify(p));
-      }
-
+      await updateAdminProfile(user.uid, { isActivated: true, lastLogin: new Date().toISOString() });
       navigate('/admin/dashboard');
     } catch (err: any) {
       setError("Erreur d'activation : " + err.message);
@@ -100,18 +120,17 @@ const AdminLogin: React.FC = () => {
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
+    setError('');
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      
       const profile = await fetchAdminProfile(user.uid);
       if (!profile) {
-         throw new Error("Accès refusé. Aucun profil administrateur lié à ce compte Google.");
+         await auth.signOut();
+         throw new Error("Accès refusé. Profil manquant.");
       }
-
       localStorage.setItem('adminToken', await user.getIdToken());
       localStorage.setItem('adminProfile', JSON.stringify(profile));
-      
       await updateAdminProfile(user.uid, { lastLogin: new Date().toISOString() });
       navigate('/admin/dashboard');
     } catch (err: any) {
@@ -139,7 +158,7 @@ const AdminLogin: React.FC = () => {
                   <span className="text-xs font-black text-white uppercase tracking-widest">Sécurité Cloud</span>
                 </div>
                 <p className="text-[10px] text-gray-400 font-bold leading-relaxed uppercase tracking-wider">
-                  Accès restreint. Vos activités sont tracées pour garantir la fiabilité des emplois du temps étudiants.
+                  Accès restreint aux agents autorisés. Votre adresse IP et vos activités sont enregistrées.
                 </p>
               </div>
             </motion.div>
@@ -202,17 +221,33 @@ const AdminLogin: React.FC = () => {
                       </div>
                     </div>
 
+                    <div className="text-right">
+                      <button 
+                        type="button" 
+                        disabled={isResetting}
+                        onClick={handleForgotPassword}
+                        className="text-[10px] font-black text-cmc-blue uppercase tracking-widest hover:underline disabled:opacity-50"
+                      >
+                        {isResetting ? "Envoi..." : "Identifiants perdus ?"}
+                      </button>
+                    </div>
+
                     <AnimatePresence>
                       {error && (
                         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="text-red-500 text-[10px] font-black uppercase p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/30 flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4" /> {error}
+                          <AlertCircle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
+                        </motion.div>
+                      )}
+                      {infoMessage && (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="text-blue-600 text-[10px] font-black uppercase p-4 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/30 flex items-center gap-2">
+                          <Info className="w-4 h-4 shrink-0" /> <span className="flex-1">{infoMessage}</span>
                         </motion.div>
                       )}
                     </AnimatePresence>
 
                     <button 
                       type="submit" disabled={isLoading}
-                      className="w-full h-16 bg-gray-900 dark:bg-cmc-blue text-white font-black uppercase tracking-widest rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl transition-all active:scale-95"
+                      className="w-full h-16 bg-gray-900 dark:bg-cmc-blue text-white font-black uppercase tracking-widest rounded-[1.5rem] flex items-center justify-center gap-3 shadow-xl transition-all active:scale-95 disabled:grayscale disabled:opacity-50"
                     >
                       {isLoading ? <RefreshCw className="animate-spin" /> : <><span>Se connecter</span> <ChevronRight className="w-5 h-5" /></>}
                     </button>
@@ -228,10 +263,10 @@ const AdminLogin: React.FC = () => {
                   <div className="p-6 bg-blue-50 dark:bg-blue-900/20 rounded-[2rem] border border-blue-100 dark:border-blue-800">
                     <div className="flex items-center gap-3 mb-4">
                       <CheckCircle2 className="w-6 h-6 text-cmc-blue" />
-                      <h3 className="font-black text-gray-900 dark:text-white uppercase tracking-tight">Activation du compte</h3>
+                      <h3 className="font-black text-gray-900 dark:text-white uppercase tracking-tight">Activation Requise</h3>
                     </div>
                     <p className="text-xs text-blue-700 dark:text-blue-300 font-medium leading-relaxed">
-                      C'est votre première connexion avec le mot de passe standard. Pour activer votre compte, veuillez définir un nouveau mot de passe sécurisé.
+                      C'est votre première connexion. Veuillez définir un mot de passe robuste pour activer définitivement votre profil administrateur.
                     </p>
                   </div>
 
@@ -242,7 +277,7 @@ const AdminLogin: React.FC = () => {
                       value={newPassword} 
                       onChange={(e:any) => setNewPassword(e.target.value)} 
                       required 
-                      placeholder="8 caractères min."
+                      placeholder="8 caractères minimum"
                     />
                     <Input 
                       label="Confirmer le mot de passe" 
@@ -253,11 +288,23 @@ const AdminLogin: React.FC = () => {
                       placeholder="Répétez le mot de passe"
                     />
 
-                    {error && <div className="text-red-500 text-xs font-bold uppercase p-4 bg-red-50 rounded-xl">{error}</div>}
+                    {error && (
+                      <div className="text-red-500 text-[10px] font-black uppercase p-4 bg-red-50 rounded-xl flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4" /> {error}
+                      </div>
+                    )}
 
                     <Button type="submit" disabled={isLoading} className="w-full h-16 rounded-[1.5rem] font-black uppercase tracking-widest">
                       {isLoading ? <RefreshCw className="animate-spin" /> : "Activer mon compte"}
                     </Button>
+                    
+                    <button 
+                      type="button" 
+                      onClick={() => setActivationMode(false)}
+                      className="w-full text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-gray-600"
+                    >
+                      Annuler et retour
+                    </button>
                   </form>
                 </motion.div>
               )}

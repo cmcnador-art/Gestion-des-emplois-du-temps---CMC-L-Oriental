@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+// Fix: Use namespaced import to resolve 'no exported member' errors in certain TS environments
+import * as RouterDOM from 'react-router-dom';
 import { fetchTimetables } from '../services/api';
 import { UI_COLORS } from '../constants';
 import { TimetableEntry, AnalysisResult, ScannedMetadata, ScheduleSlot, AdminProfile } from '../types';
@@ -12,6 +13,8 @@ import {
   ShieldCheck, FileText, Users, MapPin, Coffee, ArrowUpRight, ChevronRight
 } from '../components/Icons';
 import { Card, Badge, Button, Modal, ToastContainer } from '../components/AdminUI';
+
+const { useNavigate } = RouterDOM as any;
 
 type ToastType = { id: string, message: string, type: 'success' | 'error' | 'info' };
 
@@ -183,16 +186,14 @@ const AdminDashboard: React.FC = () => {
     loadAndScan(); 
   }, []);
 
-  const hasAccessToPole = (poleName: string) => {
-    if (!currentUser) return false;
-    if (currentUser.role === 'SUPER_ADMIN') return true;
-    return currentUser.allowedPoles.includes(poleName);
-  };
-
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Math.random().toString(36);
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
   };
 
   const loadAndScan = async () => {
@@ -202,20 +203,21 @@ const AdminDashboard: React.FC = () => {
     try {
       const entries = await fetchTimetables();
       
-      // Filtrage des entrées par périmètre
       const profile = JSON.parse(localStorage.getItem('adminProfile') || '{}');
       const filteredEntries = profile.role === 'SUPER_ADMIN' 
         ? entries 
-        : entries.filter(e => profile.allowedPoles.includes(e.pole));
+        : entries.filter((e:any) => profile.allowedPoles.includes(e.pole));
 
       setData(filteredEntries);
       const result = await analyzeTimetables(filteredEntries, (p) => setScanProgress(p));
       setAnalysis(result);
-      if (toasts.length === 0 || !isScanning) {
+      
+      // Trigger success toast only if not initial load to reduce noise
+      if (data.length > 0) {
          addToast("Données synchronisées pour votre périmètre.", "success");
       }
     } catch (e) {
-      addToast("Erreur lors de la synchronisation des données.", "error");
+      addToast("Erreur lors de la synchronisation.", "error");
     } finally {
       setTimeout(() => setIsScanning(false), 500);
     }
@@ -256,7 +258,7 @@ const AdminDashboard: React.FC = () => {
 
   return (
     <div className="space-y-8 pb-40">
-      <ToastContainer toasts={toasts} removeToast={(id: string) => setToasts(prev => prev.filter(t => t.id !== id))} />
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -264,7 +266,7 @@ const AdminDashboard: React.FC = () => {
           <div className="flex items-center gap-2 mb-1">
             <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-full border border-blue-100 dark:border-blue-800">
                <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-               <span className="text-[10px] font-black uppercase tracking-wider">Tableau de Bord {currentUser?.role === 'SUPER_ADMIN' ? 'Général' : 'de Pôle'}</span>
+               <span className="text-[10px] font-black uppercase tracking-wider">Dashboard {currentUser?.role === 'SUPER_ADMIN' ? 'Général' : 'Pôle'}</span>
             </div>
           </div>
           <h1 className="text-4xl font-black text-gray-900 dark:text-white tracking-tight">CMC <span className="text-blue-600">Admin</span> Hub</h1>
@@ -272,29 +274,28 @@ const AdminDashboard: React.FC = () => {
         <div className="flex items-center gap-3">
           <Button variant="secondary" onClick={loadAndScan} disabled={isScanning} className="rounded-xl border-gray-200 dark:border-gray-800 h-12 px-6">
              <RefreshCw className={`w-4 h-4 mr-2 ${isScanning ? 'animate-spin' : ''}`} /> 
-             {isScanning ? 'Scan...' : 'Scanner les PDF'}
+             {isScanning ? 'Analyse...' : 'Scanner PDFs'}
           </Button>
-          <Button onClick={() => navigate('/admin/structure')} className="shadow-xl shadow-blue-500/20 rounded-xl h-12 px-6">Gérer Structure</Button>
+          <Button onClick={() => navigate('/admin/structure')} className="shadow-xl shadow-blue-500/20 rounded-xl h-12 px-6">Structure Académique</Button>
         </div>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard index={0} title="Vos Groupes" value={data.length} icon={<Layers className="w-6 h-6" />} colorName="blue" subtitle="Périmètre affecté" />
-        <StatCard index={1} title="En Séance" value={analysis?.activeGroups || 0} icon={<Zap className="w-6 h-6 animate-pulse" />} colorName="green" subtitle="Cliquer pour voir la liste" onClick={() => { setPoleFilter(null); setViewingStatus('active'); }} />
-        <StatCard index={2} title="En Repos" value={analysis?.inactiveGroups || 0} icon={<Clock className="w-6 h-6" />} colorName="orange" subtitle="Cliquer pour voir la liste" onClick={() => setViewingStatus('inactive')} />
-        <StatCard index={3} title="Taux d'Activité" value={`${occupancyRate}%`} icon={<PieChart className="w-6 h-6" />} colorName="indigo" subtitle="Efficacité Live" />
+        <StatCard index={0} title="Vos Groupes" value={data.length} icon={<Layers className="w-6 h-6" />} colorName="blue" subtitle="Groupes suivis" />
+        <StatCard index={1} title="En Séance" value={analysis?.activeGroups || 0} icon={<Zap className="w-6 h-6 animate-pulse" />} colorName="green" subtitle="Voir les détails" onClick={() => { setPoleFilter(null); setViewingStatus('active'); }} />
+        <StatCard index={2} title="En Repos" value={analysis?.inactiveGroups || 0} icon={<Clock className="w-6 h-6" />} colorName="orange" subtitle="Voir la liste" onClick={() => setViewingStatus('inactive')} />
+        <StatCard index={3} title="Activité" value={`${occupancyRate}%`} icon={<PieChart className="w-6 h-6" />} colorName="indigo" subtitle="Taux d'occupation" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-12">
-        {/* Pole Activity Chart */}
         <Card className="p-8 border-none shadow-sm bg-white dark:bg-gray-900 rounded-[2.5rem]">
            <div className="flex items-center justify-between mb-8">
              <div className="flex items-center gap-3">
                <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg"><BarChart className="w-5 h-5 text-blue-600" /></div>
-               <h3 className="font-black text-gray-900 dark:text-white uppercase text-[11px] tracking-[0.2em]">Occupation {currentUser?.role === 'SUPER_ADMIN' ? 'par Pôle' : 'de vos Pôles'}</h3>
+               <h3 className="font-black text-gray-900 dark:text-white uppercase text-[11px] tracking-[0.2em]">Live par Pôle</h3>
              </div>
-             <Badge variant="outline" className="font-black text-[9px] uppercase tracking-wider">Cliquable</Badge>
+             <Badge variant="outline" className="font-black text-[9px] uppercase tracking-wider">Interactif</Badge>
            </div>
            <div className="space-y-6">
              {isScanning ? (
@@ -318,40 +319,39 @@ const AdminDashboard: React.FC = () => {
                    <div className="w-full h-2.5 bg-gray-50 dark:bg-gray-800 rounded-full overflow-hidden shadow-inner group-hover/bar:ring-2 ring-blue-500/20 transition-all">
                      <motion.div initial={{ width: 0 }} animate={{ width: `${stat.percentage}%` }} transition={{ duration: 1.2, ease: "easeOut", delay: idx * 0.1 }} className={`h-full relative overflow-hidden ${UI_COLORS[idx % UI_COLORS.length].bg}`}><div className="absolute inset-0 bg-gradient-to-r from-white/20 to-transparent" /></motion.div>
                    </div>
-                   <div className="flex justify-between items-center px-1"><span className="text-[9px] font-bold text-gray-400">{stat.count} actifs sur {stat.total}</span></div>
+                   <div className="px-1"><span className="text-[9px] font-bold text-gray-400">{stat.count} actifs sur {stat.total}</span></div>
                  </div>
                ))
              )}
            </div>
         </Card>
 
-        {/* System Health */}
         <div className="space-y-6">
           <Card className="p-8 border-none shadow-sm bg-white dark:bg-gray-900 rounded-[2.5rem]">
             <div className="flex items-center justify-between mb-8">
                <div className="flex items-center gap-3">
                  <div className="p-2 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg"><Activity className="w-5 h-5 text-indigo-500" /></div>
-                 <h3 className="font-black text-gray-900 dark:text-white uppercase text-[11px] tracking-[0.2em]">État du Système</h3>
-               </div>
-               <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /><span className="text-[10px] font-black text-green-600 uppercase tracking-widest">En Ligne</span></div>
+                 <h3 className="font-black text-gray-900 dark:text-white uppercase text-[11px] tracking-[0.2em]">Monitoring</h3>
+             </div>
+               <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /><span className="text-[10px] font-black text-green-600 uppercase tracking-widest">Connecté</span></div>
             </div>
             <div className="space-y-5">
                <div className="flex items-center justify-between p-5 rounded-3xl bg-gray-50 dark:bg-gray-800/50 hover:bg-white dark:hover:bg-gray-800 border border-transparent hover:border-gray-100 dark:hover:border-gray-700 transition-all group">
                   <div className="flex items-center gap-3"><ShieldCheck className="w-5 h-5 text-gray-400 group-hover:text-blue-500" /><span className="font-bold text-gray-600 dark:text-gray-400 uppercase text-[10px] tracking-widest">Intégrité PDF</span></div>
-                  <Badge variant="success" className="font-black tracking-tight">SYNCHRONISÉ</Badge>
+                  <Badge variant="success" className="font-black">VÉRIFIÉ</Badge>
                </div>
                <div className="flex items-center justify-between p-5 rounded-3xl bg-gray-50 dark:bg-gray-800/50 hover:bg-white dark:hover:bg-gray-800 border border-transparent hover:border-gray-100 dark:hover:border-gray-700 transition-all group">
-                  <div className="flex items-center gap-3"><Clock className="w-5 h-5 text-gray-400 group-hover:text-blue-500" /><span className="font-bold text-gray-600 dark:text-gray-400 uppercase text-[10px] tracking-widest">Périmètre Admin</span><Badge variant="outline" className="text-[9px] ml-1">{currentUser?.role}</Badge></div>
-                  <span className="font-black text-gray-900 dark:text-white text-xs">{currentUser?.role === 'SUPER_ADMIN' ? 'ACCÈS TOTAL' : 'LIMITÉ'}</span>
+                  <div className="flex items-center gap-3"><Clock className="w-5 h-5 text-gray-400 group-hover:text-blue-500" /><span className="font-bold text-gray-600 dark:text-gray-400 uppercase text-[10px] tracking-widest">Rôle</span><Badge variant="outline" className="text-[9px] ml-1">{currentUser?.role}</Badge></div>
+                  <span className="font-black text-gray-900 dark:text-white text-xs uppercase">{currentUser?.role === 'SUPER_ADMIN' ? 'Master' : 'Pôle'}</span>
                </div>
             </div>
           </Card>
           
-          <Card className="p-8 border-none shadow-sm bg-gray-950 dark:bg-blue-900/10 rounded-[2.5rem] relative overflow-hidden">
+          <Card className="p-8 border-none shadow-sm bg-gray-950 rounded-[2.5rem] relative overflow-hidden">
              <div className="relative z-10 flex items-center justify-between">
                 <div>
-                  <h4 className="text-white font-black uppercase text-[11px] tracking-[0.3em] mb-2">Gestion Structure</h4>
-                  <p className="text-white/50 text-xs font-medium max-w-[200px] leading-relaxed">Modifier les groupes et affectations de votre périmètre.</p>
+                  <h4 className="text-white font-black uppercase text-[11px] tracking-[0.3em] mb-2">Organisation</h4>
+                  <p className="text-white/50 text-xs font-medium max-w-[200px] leading-relaxed">Gérez les pôles et groupes affectés à votre périmètre.</p>
                 </div>
                 <Button onClick={() => navigate('/admin/structure')} className="bg-white text-gray-950 hover:bg-gray-100 rounded-2xl h-14 w-14 p-0 shadow-2xl"><FileText className="w-6 h-6" /></Button>
              </div>
@@ -363,7 +363,7 @@ const AdminDashboard: React.FC = () => {
       <GroupStatusPopup 
         isOpen={viewingStatus === 'active'}
         onClose={() => { setViewingStatus(null); setPoleFilter(null); }}
-        title={poleFilter ? `Séances : ${poleFilter}` : "Groupes Actuellement en Séance"}
+        title={poleFilter ? `Séances : ${poleFilter}` : "En Séance Actuellement"}
         type="active"
         groups={activeGroups}
         onSelectGroup={(g) => setSelectedGroupDetails(g)}
@@ -373,26 +373,26 @@ const AdminDashboard: React.FC = () => {
       <GroupStatusPopup 
         isOpen={viewingStatus === 'inactive'}
         onClose={() => setViewingStatus(null)}
-        title="Groupes Actuellement en Repos"
+        title="Groupes en Repos"
         type="inactive"
         groups={inactiveGroups}
         onSelectGroup={() => {}} 
         getCurrentSession={getCurrentSessionInfo}
       />
 
-      <Modal isOpen={!!selectedGroupDetails} onClose={() => setSelectedGroupDetails(null)} title="Détails de la Séance en Cours">
+      <Modal isOpen={!!selectedGroupDetails} onClose={() => setSelectedGroupDetails(null)} title="Analyse de la Séance">
         {selectedGroupDetails && (() => {
           const session = getCurrentSessionInfo(selectedGroupDetails);
           return (
             <div className="space-y-8 py-2">
-               <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-[2.5rem] text-white relative overflow-hidden shadow-2xl shadow-blue-500/20">
+               <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-[2.5rem] text-white relative overflow-hidden shadow-2xl">
                   <div className="relative z-10">
                     <div className="flex items-center gap-2 mb-4">
-                       <Badge variant="outline" className="text-white border-white/20 bg-white/10 font-black tracking-widest">{selectedGroupDetails.detectedPole}</Badge>
+                       <Badge variant="outline" className="text-white border-white/20 bg-white/10 font-black tracking-widest uppercase">{selectedGroupDetails.detectedPole}</Badge>
                     </div>
                     <h2 className="text-4xl font-black mb-1">{selectedGroupDetails.detectedGroup}</h2>
-                    <p className="text-blue-100 font-bold text-sm flex items-center gap-2 italic">
-                       <Clock className="w-4 h-4" /> {session?.time || "Période active"}
+                    <p className="text-blue-100 font-bold text-sm flex items-center gap-2">
+                       <Clock className="w-4 h-4" /> {session?.time || "Période Active"}
                     </p>
                   </div>
                   <Zap className="absolute -bottom-6 -right-6 w-32 h-32 text-white/5" />
@@ -404,23 +404,21 @@ const AdminDashboard: React.FC = () => {
                        <Users className="w-4 h-4 text-blue-500" /> Formateur
                     </div>
                     <p className="text-xl font-black text-gray-900 dark:text-white">{session?.teacher || "Non défini"}</p>
-                    <p className="text-[10px] text-gray-500 font-medium mt-1 uppercase tracking-tight">Affecté au groupe</p>
                   </div>
 
                   <div className="p-6 bg-gray-50 dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700">
                     <div className="flex items-center gap-2 text-gray-400 text-[10px] font-black uppercase tracking-[0.2em] mb-3">
-                       <MapPin className="w-4 h-4 text-green-500" /> Localisation
+                       <MapPin className="w-4 h-4 text-green-500" /> Salle / Localisation
                     </div>
-                    <p className="text-xl font-black text-gray-900 dark:text-white">{session?.room || "Salle Non Définie"}</p>
-                    <p className="text-[10px] text-gray-500 font-medium mt-1 uppercase tracking-tight">Emplacement séance</p>
+                    <p className="text-xl font-black text-gray-900 dark:text-white">{session?.room || "Salle Inconnue"}</p>
                   </div>
 
                   <div className="col-span-full p-6 bg-blue-50/50 dark:bg-blue-900/10 rounded-3xl border border-blue-100 dark:border-blue-900/30">
                     <div className="flex items-center gap-2 text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mb-3">
-                       <FileText className="w-4 h-4" /> Module Enseigné
+                       <FileText className="w-4 h-4" /> Module du Planning
                     </div>
                     <p className="text-2xl font-black text-blue-700 dark:text-blue-300 leading-tight">
-                       {session?.module || "Non défini"}
+                       {session?.module || "Non identifié"}
                     </p>
                   </div>
                </div>
@@ -428,9 +426,9 @@ const AdminDashboard: React.FC = () => {
                <div className="flex items-center justify-between p-4 px-6 bg-gray-900 rounded-2xl">
                  <div className="flex items-center gap-3">
                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                   <span className="text-[10px] font-black text-white uppercase tracking-widest">État : Groupe Actif</span>
+                   <span className="text-[10px] font-black text-white uppercase tracking-widest">Statut : Session Détectée</span>
                  </div>
-                 <Button size="xs" variant="secondary" onClick={() => navigate('/admin/structure')} className="text-[10px] font-black uppercase px-4 bg-white/10 text-white border-transparent">Modifier PDF</Button>
+                 <Button size="xs" variant="secondary" onClick={() => navigate('/admin/structure')} className="text-[10px] font-black uppercase px-4 bg-white/10 text-white border-transparent">Détails Structure</Button>
                </div>
             </div>
           );

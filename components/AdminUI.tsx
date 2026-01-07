@@ -226,26 +226,36 @@ export const Modal = ({ isOpen, onClose, title, children }: any) => (
 );
 
 // --- Toast Notification ---
-export const ToastContainer = ({ toasts, removeToast }: any) => (
-  <div className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2">
-    <AnimatePresence>
-      {toasts.map((toast: any) => (
+export const ToastContainer = ({ toasts, removeToast }: { toasts: any[], removeToast: (id: string) => void }) => (
+  <div className="fixed bottom-6 right-6 z-[200] flex flex-col gap-3 pointer-events-none">
+    <AnimatePresence initial={false}>
+      {Array.isArray(toasts) && toasts.map((toast: any) => (
         <motion.div
           key={toast.id}
-          initial={{ opacity: 0, y: 20, scale: 0.9 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${
-            toast.type === 'success' ? 'bg-white dark:bg-gray-800 border-green-200 dark:border-green-900 text-green-800 dark:text-green-300' :
-            toast.type === 'error' ? 'bg-white dark:bg-gray-800 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300' :
-            'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200'
+          initial={{ opacity: 0, x: 50, scale: 0.9 }}
+          animate={{ opacity: 1, x: 0, scale: 1 }}
+          exit={{ opacity: 0, x: 20, scale: 0.9, transition: { duration: 0.2 } }}
+          className={`pointer-events-auto flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl border min-w-[300px] ${
+            toast.type === 'success' ? 'bg-white dark:bg-gray-900 border-green-100 dark:border-green-900/30 text-green-800 dark:text-green-300' :
+            toast.type === 'error' ? 'bg-white dark:bg-gray-900 border-red-100 dark:border-red-900/30 text-red-800 dark:text-red-300' :
+            'bg-white dark:bg-gray-900 border-blue-100 dark:border-blue-900/30 text-blue-800 dark:text-blue-300'
           }`}
         >
-          {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
-          {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
-          <span className="text-sm font-medium">{toast.message}</span>
-          <button onClick={() => removeToast(toast.id)} className="ml-2 text-gray-400 hover:text-gray-600">
-            <X className="w-4 h-4" />
+          <div className={`p-2 rounded-lg ${
+            toast.type === 'success' ? 'bg-green-50 dark:bg-green-900/20' :
+            toast.type === 'error' ? 'bg-red-50 dark:bg-red-900/20' :
+            'bg-blue-50 dark:bg-blue-900/20'
+          }`}>
+            {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-green-500" />}
+            {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
+            {toast.type === 'info' && <AlertCircle className="w-5 h-5 text-blue-500" />}
+          </div>
+          <div className="flex-1">
+             <span className="text-xs font-black uppercase tracking-widest block mb-0.5">{toast.type === 'success' ? 'Succès' : toast.type === 'error' ? 'Alerte' : 'Information'}</span>
+             <span className="text-sm font-medium">{toast.message}</span>
+          </div>
+          <button onClick={() => removeToast(toast.id)} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
+            <X className="w-4 h-4 text-gray-400" />
           </button>
         </motion.div>
       ))}

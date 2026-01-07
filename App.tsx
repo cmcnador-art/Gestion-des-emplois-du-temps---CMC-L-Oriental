@@ -1,6 +1,7 @@
 
 import React, { PropsWithChildren } from 'react';
-import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+// Fix: Use namespaced import to resolve 'no exported member' errors in certain TS environments
+import * as reactRouterDom from 'react-router-dom';
 import Layout from './components/Layout';
 import AdminLayout from './components/AdminLayout'; // New Admin Layout
 import StudentPortal from './pages/StudentPortal';
@@ -8,8 +9,10 @@ import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminStructure from './pages/AdminStructure';
 import AdminManagement from './pages/AdminManagement'; // New page
-import AdminInstructors from './pages/AdminInstructors'; // New page
 import HomeSelection from './pages/HomeSelection';
+
+const { HashRouter, Routes, Route, Navigate, useLocation } = reactRouterDom as any;
+const Router = HashRouter;
 
 // Protected Route Component
 const ProtectedRoute: React.FC<PropsWithChildren> = ({ children }) => {
@@ -58,17 +61,6 @@ const App: React.FC = () => {
         />
 
         <Route 
-          path="/admin/instructors" 
-          element={
-            <ProtectedRoute>
-              <AdminLayout>
-                <AdminInstructors />
-              </AdminLayout>
-            </ProtectedRoute>
-          } 
-        />
-
-        <Route 
           path="/admin/team" 
           element={
             <ProtectedRoute>
@@ -81,6 +73,7 @@ const App: React.FC = () => {
         
         {/* Redirects */}
         <Route path="/admin/timetable" element={<Navigate to="/admin/structure" replace />} />
+        <Route path="/admin/instructors" element={<Navigate to="/admin/dashboard" replace />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

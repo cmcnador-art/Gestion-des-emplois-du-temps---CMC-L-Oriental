@@ -1,6 +1,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+// Importations Firebase pour la création de compte
+import { initializeApp, getApp, getApps } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { fetchTimetables, fetchAllAdminProfiles, upsertAdminProfile, deleteAdminProfile } from '../services/api';
 import { AdminProfile, AdminRole } from '../types';
 import { 
@@ -14,6 +17,16 @@ import {
 
 type ToastType = { id: string, message: string, type: 'success' | 'error' | 'info' };
 
+// Configuration pour l'instance secondaire Firebase (nécessaire pour créer un user sans se déconnecter)
+const firebaseConfig = {
+  apiKey: "AIzaSyBxVxVOI81XB1Fs2mhoG3dL0SASAOO6N2U",
+  authDomain: "cmc-oriental-app.firebaseapp.com",
+  projectId: "cmc-oriental-app",
+  storageBucket: "cmc-oriental-app.firebasestorage.app",
+  messagingSenderId: "708143742384",
+  appId: "1:708143742384:web:8be08c1f2b0d68d798ea75"
+};
+
 const AdminManagement: React.FC = () => {
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
   const [availablePoles, setAvailablePoles] = useState<string[]>([]);
@@ -22,7 +35,6 @@ const AdminManagement: React.FC = () => {
   const [editingAdmin, setEditingAdmin] = useState<AdminProfile | null>(null);
   const [loading, setLoading] = useState(false);
   
-  // Confirmation states
   const [confirmDelete, setConfirmDelete] = useState<AdminProfile | null>(null);
   const [confirmUpdate, setConfirmUpdate] = useState<boolean>(false);
   
@@ -120,25 +132,56 @@ const AdminManagement: React.FC = () => {
 
   const executeSave = async () => {
     setLoading(true);
+    let firebaseUid = editingAdmin?.id;
+
     try {
+      // ÉTAPE 1 : Si c'est un nouveau membre, on le crée d'abord dans Firebase Auth
+      if (!editingAdmin) {
+        // Initialisation de l'app secondaire pour ne pas interférer avec la session du Super Admin
+        const secondaryAppName = "secondary-" + Date.now();
+        const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+        const secondaryAuth = getAuth(secondaryApp);
+
+        try {
+          // Création du compte dans Firebase avec le mot de passe par défaut
+          const userCredential = await createUserWithEmailAndPassword(
+            secondaryAuth, 
+            formData.email, 
+            "CMC123"
+          );
+          firebaseUid = userCredential.user.uid;
+          
+          // Déconnexion immédiate de l'app secondaire
+          await signOut(secondaryAuth);
+        } catch (fbError: any) {
+          if (fbError.code === 'auth/email-already-in-use') {
+            throw new Error("Cet email est déjà utilisé dans Firebase Auth. Si le profil Supabase manque, contactez le support.");
+          }
+          throw fbError;
+        }
+      }
+
+      // ÉTAPE 2 : On enregistre le profil dans Supabase avec le vrai UID Firebase
       const finalAllowedPoles = formData.role === 'SUPER_ADMIN' ? ['ALL'] : formData.allowedPoles;
       
       const profileToSave: AdminProfile = {
-        id: editingAdmin ? editingAdmin.id : Math.random().toString(36).substr(2, 9), // En production, utiliser l'ID Firebase
+        id: firebaseUid!, 
         name: formData.name,
         email: formData.email,
         role: formData.role,
         allowedPoles: finalAllowedPoles,
-        isActivated: editingAdmin ? editingAdmin.isActivated : false, // Par défaut inactif pour les nouveaux
+        isActivated: editingAdmin ? editingAdmin.isActivated : false,
         lastLogin: editingAdmin ? editingAdmin.lastLogin : undefined
       };
 
       await upsertAdminProfile(profileToSave);
-      addToast("Équipe synchronisée avec Supabase.", "success");
+      addToast(editingAdmin ? "Profil mis à jour." : "Compte créé avec succès dans Firebase & Supabase.", "success");
+      
       await loadAdmins();
       handleCloseModal();
-    } catch (err) {
-      addToast("Erreur lors de la sauvegarde.", "error");
+    } catch (err: any) {
+      console.error("Erreur de sauvegarde complète:", err);
+      addToast(err.message || "Erreur lors de la synchronisation des comptes.", "error");
     } finally {
       setLoading(false);
       setConfirmUpdate(false);
@@ -149,8 +192,10 @@ const AdminManagement: React.FC = () => {
     if (!confirmDelete) return;
     setLoading(true);
     try {
+      // Note: La suppression dans Firebase Auth nécessite généralement le SDK Admin ou une fonction cloud.
+      // Ici on révoque uniquement l'accès dans Supabase pour bloquer l'entrée.
       await deleteAdminProfile(confirmDelete.id);
-      addToast("Accès révoqué définitivement.", "success");
+      addToast("Accès révoqué dans la base de données.", "success");
       await loadAdmins();
       setConfirmDelete(null);
     } catch (e) {
@@ -167,7 +212,7 @@ const AdminManagement: React.FC = () => {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Équipe Admin</h1>
-          <p className="text-gray-500 font-medium">Gestion des accès et périmètres de responsabilité.</p>
+          <p className="text-gray-500 font-medium">Gestion automatisée Firebase Auth & Supabase.</p>
         </div>
         <Button onClick={() => { setEditingAdmin(null); setIsModalOpen(true); }} className="h-12 px-8 rounded-2xl shadow-xl shadow-cmc-blue/20">
           <Plus className="w-5 h-5 mr-2" /> Nouveau Membre
@@ -257,9 +302,15 @@ const AdminManagement: React.FC = () => {
             disabled={!!editingAdmin}
           />
           {!editingAdmin && (
-             <div className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-200 dark:border-gray-700">
-               <p className="text-[10px] font-black uppercase text-gray-400 mb-1">Note de sécurité</p>
-               <p className="text-[9px] text-gray-500 font-medium">Le mot de passe par défaut sera <strong>CMC123</strong>. L'administrateur devra le changer à sa première connexion.</p>
+             <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-dashed border-blue-100 dark:border-blue-800">
+               <div className="flex items-center gap-2 mb-1">
+                 <ShieldCheck className="w-4 h-4 text-cmc-blue" />
+                 <p className="text-[10px] font-black uppercase text-cmc-blue tracking-widest">Liaison automatique Cloud</p>
+               </div>
+               <p className="text-[9px] text-gray-500 dark:text-gray-400 font-medium leading-relaxed">
+                 Cette action va créer un compte dans **Firebase Auth** et synchroniser le profil dans **Supabase**. 
+                 Mot de passe par défaut : <strong className="text-cmc-blue">CMC123</strong>
+               </p>
              </div>
           )}
           <Select 
@@ -331,19 +382,24 @@ const AdminManagement: React.FC = () => {
           )}
 
           <Button type="submit" disabled={loading} className="w-full h-14 rounded-2xl shadow-xl shadow-cmc-blue/20">
-            {editingAdmin ? "Enregistrer les modifications" : "Créer le profil administrateur"}
+            {loading ? <RefreshCw className="animate-spin w-5 h-5" /> : (editingAdmin ? "Enregistrer les modifications" : "Créer les comptes Cloud")}
           </Button>
         </form>
       </Modal>
 
-      <Modal isOpen={confirmUpdate} onClose={() => setConfirmUpdate(false)} title="Confirmation de modification">
+      <Modal isOpen={confirmUpdate} onClose={() => setConfirmUpdate(false)} title="Confirmation Cloud">
         <div className="text-center py-4">
-          <CheckCircle2 className="w-16 h-16 text-cmc-blue mx-auto mb-4" />
-          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-2 uppercase">Vérification de sécurité</h3>
-          <p className="text-sm text-gray-500 mb-8">Voulez-vous valider ces nouveaux droits d'accès pour {formData.name} ?</p>
+          <div className="w-16 h-16 bg-blue-50 dark:bg-blue-900/20 text-cmc-blue rounded-full flex items-center justify-center mx-auto mb-4 border border-blue-100">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-2 uppercase">Prêt pour la synchronisation</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 leading-relaxed px-4">
+            L'application va créer les accès sécurisés pour <strong>{formData.name}</strong>. 
+            Il/Elle pourra se connecter immédiatement après validation.
+          </p>
           <div className="flex gap-3">
-            <Button variant="secondary" className="flex-1 h-12" onClick={() => setConfirmUpdate(false)}>Annuler</Button>
-            <Button className="flex-1 h-12 shadow-lg shadow-cmc-blue/20" onClick={executeSave}>Valider les droits</Button>
+            <Button variant="secondary" className="flex-1 h-12 rounded-xl" onClick={() => setConfirmUpdate(false)}>Annuler</Button>
+            <Button className="flex-1 h-12 shadow-lg shadow-cmc-blue/20 rounded-xl" onClick={executeSave}>Démarrer la création</Button>
           </div>
         </div>
       </Modal>
@@ -351,9 +407,10 @@ const AdminManagement: React.FC = () => {
       <Modal isOpen={!!confirmDelete} onClose={() => setConfirmDelete(null)} title="Révocation d'accès">
         <div className="text-center py-4">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-2 uppercase">Suppression définitive</h3>
+          <h3 className="text-lg font-black text-gray-900 dark:text-white mb-2 uppercase">Suppression de profil</h3>
           <p className="text-sm text-gray-500 mb-8">
-            Attention, la suppression de l'accès pour <strong>{confirmDelete?.name}</strong> est immédiate dans la base de données.
+            Révoquer l'accès pour <strong>{confirmDelete?.name}</strong>. 
+            <br/><span className="text-[10px] text-red-500 uppercase font-bold mt-2 block">Note: Le compte Firebase Auth doit être supprimé manuellement via la console Firebase pour une sécurité totale.</span>
           </p>
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1 h-12" onClick={() => setConfirmDelete(null)}>Annuler</Button>
